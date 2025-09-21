@@ -1,0 +1,191 @@
+"""
+Refined N-Body Simulation with ZOT Matrix and Locksmith Function
+
+This script provides a complete, self-contained implementation of the refined N-body problem using
+Zero Operator Theory (ZOT) components: the ZOT Matrix for emergent compression (sparsifying interactions)
+and the Locksmith function for temporal modulation of regularization parameters.
+
+Based on the ZOT-3B model from https://github.com/richards225/ZOT-3B-Simulations-Python.
+Suitable for adding to the repository as 'refined_nbody_zot.py'.
+
+Features:
+- General for any N (tested with N=3 as benchmark).
+- ZOT Matrix: Sparsifies gravitational computations for efficiency.
+- Locksmith: Dynamically modulates softening (eps), compression, and damping.
+- Energy diagnostics for verification.
+- Adimensional units; extendable to SI.
+
+Dependencies: numpy, scipy (install via pip install numpy scipy).
+
+For more on ZOT Theory: https://www.zottheory.org
+Creator: Ricardo Bartolome, with AI collaboration (Grok by xAI).
+
+MIT License (as in the original repo).
+"""
+
+import numpy as np
+from scipy.special import lambertw
+from scipy.integrate import solve_ivp
+import time
+
+G = 1.0  # Adimensional gravitational constant
+
+def locksmith_function(tau, k=0.0, c=1.0, delta=1e-6):
+    """Locksmith function f_L(tau) for temporal modulation.
+    Ensures irreversibility and smooth transitions.
+    Parameters from ZOT Theory (adjust k for cosmological scales).
+    """
+    if tau <= 0:
+        return 0.0
+    arg = tau * np.exp(np.clip(k * tau, -700, 700))
+    W = lambertw(arg).real if arg > 0 else 0.0
+    sigmoid = 1.0 / (1.0 + np.exp(-c * (tau - delta)))
+    return tau * W * sigmoid
+
+def D_of_tau_dynamic(tau, alpha=1.0, k=0.0, c=1.0, delta=1e-6):
+    """Dynamic modulation D(tau) = alpha * f_L(tau)."""
+    return alpha * locksmith_function(tau, k, c, delta)
+
+def pair_force(r_i, r_j, eps):
+    """Pairwise force direction (excluding G and masses)."""
+    dr = r_i - r_j
+    r2 = np.dot(dr, dr) + eps * eps
+    r = np.sqrt(r2)
+    return -dr / (r2 * r)
+
+def Vc_and_grad(positions, mu=1e-3, eps=1e-4):
+    """Compression potential Vc and gradient."""
+    n = positions.shape[0]
+    V = 0.0
+    grad = np.zeros_like(positions)
+    for i in range(n):
+        for j in range(i + 1, n):
+            dr = positions[i] - positions[j]
+            r2 = np.dot(dr, dr) + eps * eps
+            r = np.sqrt(r2)
+            V += mu / r
+            g = -mu * dr / (r2 * r)
+            grad[i] += g
+            grad[j] -= g
+    return float(V), grad
+
+def generate_zot_matrix(positions, threshold=1.0, sparsity=0.5):
+    """Generate ZOT Matrix: Binary sparse matrix for compression.
+    S_ij = 1 for significant pairs (close or random keep), else 0.
+    For dynamic use, recompute periodically.
+    """
+    n = positions.shape[0]
+    S = np.zeros((n, n))
+    for i in range(n):
+        for j in range(i + 1, n):
+            rij = np.linalg.norm(positions[i] - positions[j])
+            if rij < threshold or np.random.rand() > sparsity:
+                S[i, j] = S[j, i] = 1
+    return S
+
+def zot_rhs_refined(tau, y, masses, params, S):
+    """Refined RHS for ODE: dy/dt with ZOT refinements."""
+    n = len(masses)
+    pos = y[:3*n].reshape((n, 3))
+    vel = y[3*n:].reshape((n, 3))
+    acc = np.zeros_like(pos)
+    
+    D = D_of_tau_dynamic(tau, params.get('alpha', 1.0), params.get('k', 0.0),
+                         params.get('c', 1.0), params.get('delta', 1e-6))
+    eps = params.get('eps0', 1e-4) * (1.0 + params.get('beta', 1e-2) * D)
+    
+    kappa = params.get('kappa', 1e-3)
+    mu = params.get('mu', 1e-3)
+    xi0 = params.get('xi0', 1e-4)
+    xi = xi0 * D
+    
+    # Gravitational accelerations, masked by ZOT Matrix S
+    for i in range(n):
+        for j in range(n):
+            if i == j or S[i, j] == 0:
+                continue
+            acc[i] += G * masses[j] * pair_force(pos[i], pos[j], eps)
+    
+    # Compression potential gradient
+    Vc, gradVc = Vc_and_grad(pos, mu=mu, eps=eps)
+    acc += - (kappa * D) * gradVc
+    
+    # Velocity damping
+    acc += - (xi / masses[:, None]) * vel
+    
+    dydt = np.zeros_like(y)
+    dydt[:3 * n] = vel.flatten()
+    dydt[3 * n:] = acc.flatten()
+    return dydt
+
+def compute_energy(pos, vel, masses, params, tau):
+    """Compute effective energy Eeff = K + U + kappa * D * Vc."""
+    n = len(masses)
+    D = D_of_tau_dynamic(tau, params.get('alpha', 1.0), params.get('k', 0.0),
+                         params.get('c', 1.0), params.get('delta', 1e-6))
+    eps = params.get('eps0', 1e-4) * (1.0 + params.get('beta', 1e-2) * D)
+    K = 0.5 * np.sum(masses[:, None] * vel ** 2)
+    U = 0.0
+    for i in range(n):
+        for j in range(i + 1, n):
+            rij = np.linalg.norm(pos[i] - pos[j])
+            U += - G * masses[i] * masses[j] / np.sqrt(rij**2 + eps**2)
+    Vc, _ = Vc_and_grad(pos, mu=params.get('mu', 1e-3), eps=eps)
+    Eeff = K + U + params.get('kappa', 1e-3) * D * Vc
+    return {'K': float(K), 'U': float(U), 'Vc': float(Vc), 'Eeff': float(Eeff)}
+
+def run_nbody_demo(n=3, t_span=(0.0, 10.0), verbose=True):
+    """Run demo simulation for N bodies.
+    For N=3, uses benchmark ICs; for others, random.
+    Prints diagnostics; returns solution object.
+    """
+    masses = np.ones(n)
+    if n == 3:
+        pos0 = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.3, 0.8, 0.0]])
+        vel0 = np.array([[0.0, 0.0, 0.0], [0.0, 0.5, 0.0], [-0.4, -0.1, 0.0]])
+    else:
+        pos0 = np.random.uniform(-1, 1, (n, 3))
+        vel0 = np.random.uniform(-0.5, 0.5, (n, 3))
+    y0 = np.concatenate([pos0.flatten(), vel0.flatten()])
+    
+    params = {
+        'eps0': 1e-4,      # Base softening
+        'beta': 1e-2,      # Modulation factor
+        'kappa': 1e-3,     # Compression strength
+        'mu': 1e-3,        # Compression potential param
+        'xi0': 1e-4,       # Damping base
+        'alpha': 1.0,      # Locksmith scale
+        'k': 0.0,          # Locksmith growth (set >0 for faster modulation)
+        'c': 1.0,          # Sigmoid sharpness
+        'delta': 1e-6,     # Sigmoid shift
+        'threshold': 2.0,  # ZOT Matrix distance threshold
+        'sparsity': 0.3    # ZOT Matrix skip probability (0-1, higher=more sparse)
+    }
+    
+    S = generate_zot_matrix(pos0, threshold=params['threshold'], sparsity=params['sparsity'])
+    
+    t0 = time.time()
+    sol = solve_ivp(lambda t, y: zot_rhs_refined(t, y, masses, params, S),
+                    t_span, y0, rtol=1e-9, atol=1e-12, max_step=0.2)
+    dt = time.time() - t0
+    
+    if verbose:
+        print(f"Integration finished: {len(sol.t)} points, elapsed {dt:.2f}s")
+        
+        pos_final = sol.y[:3*n, -1].reshape((n, 3))
+        vel_final = sol.y[3*n:, -1].reshape((n, 3))
+        start_energy = compute_energy(pos0, vel0, masses, params, t_span[0])
+        end_energy = compute_energy(pos_final, vel_final, masses, params, t_span[1])
+        
+        print("Initial Eeff:", start_energy['Eeff'])
+        print("Final Eeff:", end_energy['Eeff'])
+        print("Final positions:\n", pos_final)
+    
+    return sol
+
+if __name__ == '__main__':
+    # Demo run: N=3, t=0 to 10 (adimensional)
+    run_nbody_demo(n=3, t_span=(0.0, 10.0))
+    
+    # Example for larger N: Uncomment to test
+    # run_nbody_demo(n=10, t_span=(0.0, 50.0))
