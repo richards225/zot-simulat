@@ -1,0 +1,68 @@
+import numpy as np
+from sklearn.datasets import load_iris
+from sklearn.cluster import DBSCAN
+from sklearn.metrics import pairwise_distances_argmin_min
+
+def locksmith_update(mask, labels, prev_labels, theta=0.01):
+    # Função Locksmith: Adapta a máscara temporalmente baseada em mudanças de labels
+    # Delta: fração de pontos que mudaram de label (inclui -1 para noise)
+    changes = labels != prev_labels
+    delta = np.mean(changes)
+    if delta < theta:
+        # Máscara pontos não-contributivos (aqueles que não mudaram)
+        mask[~changes] = False
+    return mask
+
+def zot_dbscan(X, eps_start=1.0, eps_end=0.3, eps_step=0.1, min_samples=5, theta=0.01, max_iter=10):
+    # Inicializa máscara ZOT (binária: True = contributivo)
+    n = X.shape[0]
+    zot_mask = np.ones(n, dtype=bool)
+    
+    prev_labels = np.full(n, -1)  # Inicial: todos noise
+    eps = eps_start
+    
+    for iter in range(max_iter):
+        # Executa DBSCAN só nos pontos mascarados
+        masked_X = X[zot_mask]
+        if len(masked_X) == 0:
+            break
+        db = DBSCAN(eps=eps, min_samples=min_samples)
+        labels_masked = db.fit_predict(masked_X)
+        
+        # Atualiza labels completos
+        labels = np.full(n, -1)
+        labels[zot_mask] = labels_masked
+        
+        # Atribui unmasked a nearest cluster (opcional, mas ajuda na estabilidade)
+        if np.any(~zot_mask):
+            unmasked_X = X[~zot_mask]
+            closest, _ = pairwise_distances_argmin_min(unmasked_X, masked_X)
+            labels[~zot_mask] = labels_masked[closest]
+        
+        # Aplica função Locksmith para adaptar máscara
+        zot_mask = locksmith_update(zot_mask, labels, prev_labels, theta)
+        
+        # Checa convergência
+        if np.all(labels == prev_labels):
+            break
+        prev_labels = labels
+        
+        # Diminui eps para refinamento
+        eps = max(eps - eps_step, eps_end)
+    
+    # Atribuição final para qualquer unmasked restante
+    if np.any(~zot_mask):
+        unmasked_X = X[~zot_mask]
+        clustered_X = X[labels != -1]
+        clustered_labels = labels[labels != -1]
+        if len(clustered_labels) > 0:
+            closest, _ = pairwise_distances_argmin_min(unmasked_X, clustered_X)
+            labels[~zot_mask] = clustered_labels[closest]
+    
+    return labels
+
+# Exemplo de uso
+data = load_iris()
+X = data.data
+labels = zot_dbscan(X, eps_start=1.0, eps_end=0.3, eps_step=0.1, min_samples=5, theta=0.005)
+print("Atribuições de clusters (labels):", labels)
