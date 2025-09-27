@@ -1,0 +1,59 @@
+import numpy as np
+from sklearn.datasets import load_iris
+from sklearn.cluster import KMeans
+from sklearn.metrics import pairwise_distances_argmin_min
+
+def locksmith_update(mask, assignments, prev_assignments, theta=0.01):
+    # Função Locksmith: Adapta a máscara temporalmente baseada em mudanças de atribuição
+    # Delta: fração de pontos que mudaram de cluster
+    changes = np.abs(assignments - prev_assignments) > 0
+    delta = np.mean(changes)
+    if delta < theta:
+        # Máscara pontos não-contributivos (aqueles que não mudaram)
+        mask[~changes] = 0
+    return mask
+
+def zot_kmeans(X, k=3, max_iter=300, theta=0.01):
+    # Inicializa K-means padrão
+    model = KMeans(n_clusters=k, max_iter=1, n_init=1)  # Usamos manualmente para controle
+    model.fit(X)  # Inicial centroides
+    centroids = model.cluster_centers_
+    
+    # Inicial Matriz de ZOT (máscara binária: 1 = contributivo)
+    n = X.shape[0]
+    zot_mask = np.ones(n, dtype=bool)  # Vetor binário simples para masking de pontos
+    
+    prev_assignments = np.zeros(n)
+    for iter in range(max_iter):
+        # Calcula atribuições só para pontos mascarados como 1
+        masked_X = X[zot_mask]
+        if len(masked_X) == 0:
+            break  # Todos mascarados, convergiu cedo
+        assignments_masked, _ = pairwise_distances_argmin_min(masked_X, centroids)
+        
+        # Atualiza atribuições completas
+        assignments = np.full(n, -1)
+        assignments[zot_mask] = assignments_masked
+        
+        # Atualiza centroides (usando todos, mas pesos implícitos via máscara)
+        for i in range(k):
+            cluster_points = X[assignments == i]
+            if len(cluster_points) > 0:
+                centroids[i] = np.mean(cluster_points, axis=0)
+        
+        # Aplica função Locksmith para adaptar máscara
+        zot_mask = locksmith_update(zot_mask, assignments, prev_assignments, theta)
+        
+        # Checa convergência
+        if np.all(assignments == prev_assignments):
+            break
+        prev_assignments = assignments
+    
+    return assignments, centroids
+
+# Exemplo de uso
+data = load_iris()
+X = data.data
+assignments, centroids = zot_kmeans(X, k=3, theta=0.005)
+print("Atribuições de clusters:", assignments)
+print("Centroides finais:", centroids)
