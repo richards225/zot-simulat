@@ -1,0 +1,25 @@
+import numpy as np
+
+def locksmith_update(mask, values, prev_values, theta=0.01):
+    changes = np.abs(values - prev_values)
+    delta = np.mean(changes)
+    if delta < theta:
+        mask[changes < theta] = False
+    return mask
+
+def zot_vqe(steps=200, lr=0.1, theta_thresh=0.01):
+    theta = np.random.rand(10)
+    mask = np.ones(10, dtype=bool)
+    prev_theta = theta.copy()
+    for it in range(steps):
+        if it % 10 == 0:
+            mask = locksmith_update(mask, theta, prev_theta, theta_thresh)
+            prev_theta = theta.copy()
+        masked_theta = theta[mask]
+        if len(masked_theta) == 0:
+            break
+        grads_masked = np.cos(masked_theta) + 2*masked_theta
+        grads = np.zeros(10)
+        grads[mask] = grads_masked
+        theta -= lr * grads
+    return theta
