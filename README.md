@@ -1,7 +1,7 @@
 # zot-simulat
 Autor:  Ricardo Bartolome.
 Repositório  ZOT para simulações
-Repositório de Simulações da Teoria do Operador Zero (ZOT)Visão geralBem-vindo ao repositório de Simulações da Teoria do Operador Zero (ZOT) ! Este projeto é dedicado à implementação e ao compartilhamento de simulações computacionais que exploram e validam os princípios da ZOT, particularmente no contexto da cosmologia. A ZOT, ou Teoria do Operador Zero , é uma metateoria que reinterpreta indeterminações matemáticas como $0/00/00/0$
+Repositório de Simulações da Teoria do Operador Zero (ZOT) Visão geral. Bem-vindo ao repositório de Simulações da Teoria do Operador Zero (ZOT) ! Este projeto é dedicado à implementação e ao compartilhamento de simulações computacionais que exploram e validam os princípios da ZOT, particularmente no contexto da cosmologia. A ZOT, ou Teoria do Operador Zero , é uma metateoria que reinterpreta indeterminações matemáticas como $0/00/00/0$
 como operadores quânticos fundamentais $(0∧0^\cunha0^\wedge
 )$, fornecendo uma estrutura unificada para física quântica, cosmologia, ontologia e até mesmo algoritmos computacionais.Conceitos-chave do ZOTAxiomas Principais :A quebra observável gera orientação temporal.
 Os sistemas evoluem para longe da simetria perfeita após a quebra.
