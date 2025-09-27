@@ -1,0 +1,23 @@
+import numpy as np
+
+def locksmith_update(mask, values, prev_values, theta=0.01):
+    changes = np.abs(values - prev_values)
+    delta = np.mean(changes)
+    if delta < theta:
+        mask[changes < theta] = False
+    return mask
+
+def zot_burgers(n=1000, t_steps=200, nu=0.01, theta=0.01):
+    x = np.linspace(0, 2*np.pi, n)
+    u = np.sin(x)
+    dx = x[1] - x[0]
+    dt = dx / 10
+    mask = np.ones(n, dtype=bool)
+    prev_u = u.copy()
+    for it in range(t_steps):
+        if it % 10 == 0:
+            mask = locksmith_update(mask, u, prev_u, theta)
+            prev_u = u.copy()
+        u_new = u - u * dt / dx * (u - np.roll(u, 1)) + nu * dt / dx**2 * (np.roll(u, -1) - 2*u + np.roll(u, 1))
+        u = u * ~mask + u_new * mask
+    return u
